@@ -65,7 +65,6 @@ pub fn get_drives()->Vec<Drive>{
 }
 
 fn main() {
-    println!("Hello, world!");
     let d = get_drives();
     dbg!(d);
 }
