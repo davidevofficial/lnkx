@@ -1,0 +1,18 @@
+[package]
+name = "rs-053-lnk_opener"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name="lnkx"
+path = "src/main.rs"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = "symbols"
+
+[dependencies]
+lnk = "0.6.4"
