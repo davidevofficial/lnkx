@@ -14,7 +14,8 @@ lnkx /path/to/file.lnk : Tries to open the resource pointed at by the file
 
 CLI Usage:
 lnkx create /path/to/file.lnk /path/to/program.exe [arg1] [...] [argn] : Creates a new .lnk file
-lnkx convert /path/to/symlink /path/to/file.lnk : Converts an existing Symlink to a .lnk file while keeping the original file
+lnkx create /path/to/file.url https://example.com : Creates a new .url file
+lnkx convert /path/to/symlink /path/to/file : Converts an existing Symlink to a .lnk file while keeping the original file
 lnkx convert /path/to/file.lnk /path/to/symlink : Converts an existing .lnk file to a symlink while keeping the original file
 lnkx help : Shows this message
 lnkx (no arg) : Shows this message";
