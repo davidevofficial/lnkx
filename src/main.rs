@@ -112,15 +112,19 @@ impl Lnk {
                     if absolute.is_ok(){
                         match absolute.unwrap().to_str(){
                             Some(a) => {self.working_dir = Some(a.to_string());},
-                            None => {},
+                            None => {self.working_dir = None},
                         }
                     }
                 } else if d.label == self.volume_label.clone().unwrap(){
                     mountpoint = Some(d.mountpoint.clone());
                     let w = self.working_dir.clone();
                     let unix = w.unwrap().clone().replace('\\', "/");
-                    let unix = mountpoint.unwrap() + &unix[2..unix.len()];
-                    self.working_dir = Some(unix);
+                    let unix = mountpoint.clone().unwrap() + &unix[2..unix.len()];
+                    if Path::new(&unix).exists(){
+                        self.working_dir = Some(unix);
+                    }else{
+                        self.working_dir = None;
+                    }
                 }
             }
         }
@@ -140,11 +144,24 @@ impl Lnk {
         match self.absolute_path{
             Some(_) => return,
             None => {
-                todo!("So basically the problem is that if the relative is broken I shall use the LOCAL BASE PATH and I have to cross check the volume label with the current one using lsblk ");
-                // 1. Find from the drives which has the same label
-                // 2. Replace the \\ with / (Unix style)
-                // 3. Replace the first two letters (X:) with mountpoint
-                // 4. If the newly created absolute path works then return Some(abs) otherwise None and the program will silently fail
+                // todo!("So basically the problem is that if the relative is broken I shall use the LOCAL BASE PATH and I have to cross check the volume label with the current one using lsblk ");
+                // Find from the drives which has the same label
+                if mountpoint.is_none(){
+                    let drives = get_drives();
+                    for d in drives{
+                        if d.label == self.volume_label.clone().unwrap(){
+                            mountpoint = Some(d.mountpoint.clone());
+                        }
+                    }
+                }
+                let w = self.local_base_path.clone();
+                let unix = w.unwrap().clone().replace('\\', "/");
+                let unix = mountpoint.clone().unwrap() + &unix[2..unix.len()];
+                if Path::new(&unix).exists(){
+                    self.absolute_path = Some(unix);
+                }else{
+                    self.absolute_path = None;
+                }
             },
         }
     }
