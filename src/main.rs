@@ -1,40 +1,56 @@
 use lnk;
+use std::ffi::OsStr;
+use std::io::{self, ErrorKind};
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::env;
+
+const HELP: &str =
+"
+
+Normal Usage:
+lnkx /path/to/file.lnk : Tries to open the resource pointed at by the file
+
+CLI Usage:
+lnkx create /path/to/file.lnk /path/to/program.exe [arg1] [...] [argn] : Creates a new .lnk file
+lnkx convert /path/to/symlink /path/to/file.lnk : Converts an existing Symlink to a .lnk file while keeping the original file
+lnkx convert /path/to/file.lnk /path/to/symlink : Converts an existing .lnk file to a symlink while keeping the original file
+lnkx help : Shows this message
+lnkx (no arg) : Shows this message";
 
 #[derive(Debug, Default)]
 pub struct Drive{
-    path: String,
+    // path: String,
     mountpoint: String,
     label: String
 }
+
 fn lines_from_bytes(mut data: Vec<u8>) -> Vec<Vec<u8>> {
     let mut lines = Vec::new();
 
     while let Some(pos) = data[0..].iter().position(|&b| b == b'\n') {
         let end = pos;
         lines.push(data.drain(0..=end).collect());
-        // No need for start = end + 1; drain adjusts remaining data
     }
-
-    // Last line
     if !data.is_empty() {
         lines.push(data.drain(..).collect());
     }
-
     lines
 }
 pub fn get_drives()->Vec<Drive>{
     let mut drives = Vec::new();
 
-    let mut drives_path = Vec::new();
-    let lsblk = std::process::Command::new("lsblk")
-        .args(&["-l", "-n", "-o", "PATH"])
-        .output()
-        .expect("lsblk failed");
-    let lines = lines_from_bytes(lsblk.stdout);
-    for i in 0..lines.len(){
-        let p = &lines[i][0..lines[i].len()-1];
-        drives_path.push(String::from_utf8(p.to_vec()).unwrap());
-    }
+    // let mut drives_path = Vec::new();
+    // let lsblk = std::process::Command::new("lsblk")
+    //     .args(&["-l", "-n", "-o", "PATH"])
+    //     .output()
+    //     .expect("lsblk failed");
+    // let lines = lines_from_bytes(lsblk.stdout);
+    // for i in 0..lines.len(){
+    //     let p = &lines[i][0..lines[i].len()-1];
+    //     drives_path.push(String::from_utf8(p.to_vec()).unwrap());
+    // }
 
     let mut drives_mountpoint = Vec::new();
     let lsblk = std::process::Command::new("lsblk")
@@ -58,8 +74,9 @@ pub fn get_drives()->Vec<Drive>{
         drives_label.push(String::from_utf8(l.to_vec()).unwrap());
     }
 
-    for i in 0..drives_path.len(){
-        drives.push(Drive { path: drives_path[i].clone(), mountpoint: drives_mountpoint[i].clone(), label: drives_label[i].clone() })
+    for i in 0..drives_mountpoint.len(){
+        drives.push(Drive { // path: drives_path[i].clone(),
+            mountpoint: drives_mountpoint[i].clone(), label: drives_label[i].clone() })
     }
     drives
 }
@@ -79,8 +96,35 @@ pub struct Lnk {
     local_base_path: Option<String>,
     absolute_path: Option<String>,
 }
+
 impl Lnk {
     fn absolute_path(self: &mut Self, base: String){
+        let mut mountpoint: Option<String> = None;
+        if self.working_dir.is_some(){
+            let drives = get_drives();
+            for d in drives{
+                if self.volume_label.is_none(){
+                    // Add relative working dir
+                    let r = self.working_dir.clone();
+                    let relative = r.unwrap().clone().replace('\\', "/");
+                    let dir = Path::new(&base).parent().unwrap_or_else(|| Path::new("."));
+                    let absolute = std::fs::canonicalize(dir.join(relative));
+                    if absolute.is_ok(){
+                        match absolute.unwrap().to_str(){
+                            Some(a) => {self.working_dir = Some(a.to_string());},
+                            None => {},
+                        }
+                    }
+                } else if d.label == self.volume_label.clone().unwrap(){
+                    mountpoint = Some(d.mountpoint.clone());
+                    let w = self.working_dir.clone();
+                    let unix = w.unwrap().clone().replace('\\', "/");
+                    let unix = mountpoint.unwrap() + &unix[2..unix.len()];
+                    self.working_dir = Some(unix);
+                }
+            }
+        }
+
         if self.relative_path.is_some(){
             let r = self.relative_path.clone();
             let relative = r.unwrap().clone().replace('\\', "/");
@@ -96,7 +140,6 @@ impl Lnk {
         match self.absolute_path{
             Some(_) => return,
             None => {
-                let drives = get_drives();
                 todo!("So basically the problem is that if the relative is broken I shall use the LOCAL BASE PATH and I have to cross check the volume label with the current one using lsblk ");
                 // 1. Find from the drives which has the same label
                 // 2. Replace the \\ with / (Unix style)
@@ -111,7 +154,7 @@ impl Lnk {
 fn split_args(s: &str) -> Option<Vec<String>> {
     let mut args = Vec::new();
     let mut current = String::new();
-    let mut in_arg = false; // lets "" produce an empty argument
+    let mut in_arg = false;
     let mut quote: Option<char> = None;
     let mut chars = s.chars().peekable();
 
@@ -152,11 +195,7 @@ fn split_args(s: &str) -> Option<Vec<String>> {
     }
     Some(args)
 }
-use std::ffi::OsStr;
-use std::io::{self, ErrorKind};
-use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+
 fn open_smart(target: &str, command_line_arguments: Option<String>, working_dir: Option<String>) -> io::Result<()> {
     let path = Path::new(target);
     let is_exe = path
@@ -210,20 +249,7 @@ fn parse_url_file(path: &Path) -> Option<String> {
             .then(|| value.trim().to_string())
     })
 }
-const HELP: &str =
-"
 
-Normal Usage:
-lnkx /path/to/file.lnk : Tries to open the resource pointed at by the file
-
-CLI Usage:
-lnkx create /path/to/file.lnk /path/to/program.exe [arg1] [...] [argn] : Creates a new .lnk file
-lnkx convert /path/to/symlink /path/to/file.lnk : Converts an existing Symlink to a .lnk file while keeping the original file
-lnkx convert /path/to/file.lnk /path/to/symlink : Converts an existing .lnk file to a symlink while keeping the original file
-lnkx help : Shows this message
-lnkx (no arg) : Shows this message";
-
-use std::env;
 fn main() {
     let mut i = 0;
     let mut args = Vec::new();
@@ -282,6 +308,8 @@ fn main() {
                     dbg!(&lnk);
                     // Do stuff with the .lnk
                     lnk.absolute_path(args[1].clone());
+                    dbg!(&lnk);
+
                     match lnk.absolute_path{
                         Some(a) => {
                             dbg!(&a);
