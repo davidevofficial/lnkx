@@ -198,6 +198,18 @@ fn open_smart(target: &str, command_line_arguments: Option<String>, working_dir:
     Ok(())
 }
 
+fn parse_url_file(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let text = text.trim_start_matches('\u{feff}');
+
+    text.lines().find_map(|line| {
+        let (key, value) = line.trim().split_once('=')?;
+        key.trim()
+            .eq_ignore_ascii_case("URL")
+            .then(|| value.trim().to_string())
+    })
+}
 const HELP: &str =
 "
 
@@ -229,6 +241,14 @@ fn main() {
         // else if args[1] == String::from(keyword1) { ... }
         else {
             let path = Path::new(&args[1]);
+            match parse_url_file(&path) {
+                Some(target) => {
+                    if let Err(e) = open_smart(&target, None, None)  {
+                        eprintln!("failed to open {target}: {e}");
+                    }
+                }
+                None => eprintln!("no URL= line found in file"),
+            }
             assert!(args[1].ends_with(".lnk"));
             if path.exists(){
                 let link = lnk::ShellLink::open(path, lnk::encoding::WINDOWS_1252);

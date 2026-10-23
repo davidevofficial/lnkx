@@ -4,10 +4,11 @@ A simple tool made in rust to open windows shell links (.lnk) on Linux by just d
 
 Features:
 
-- [ ] Reads .lnk files
-- [ ] Converts .lnk files to corresponding path on linux
-- [ ] Runs the windows program using wine
-- [ ] Runs the program with arguments using wine
+- [x] Reads .lnk files
+- [x] Converts .lnk files to corresponding path on linux
+- [x] Runs the windows program using wine
+- [x] Runs the program with arguments using wine
+- [x] Open .url files
 - [ ] Runs Linux binaries with args
 - [ ] Use it as a CLI to create .lnk files for linux binaries
 - [ ] Use it as a CLI to convert .lnk files to symlinks and viceversa
