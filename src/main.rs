@@ -64,7 +64,215 @@ pub fn get_drives()->Vec<Drive>{
     drives
 }
 
+#[derive(Debug,Default)]
+pub struct Lnk {
+    /// string_data -> relative_path
+    relative_path: Option<String>,
+    /// string_data -> working_dir
+    working_dir: Option<String>,
+    /// string_data -> command_line_arguments
+    command_line_arguments: Option<String>,
+    // Link info
+    /// link_info -> volume_id -> volume_label
+    volume_label: Option<String>,
+    /// link_info -> local_base_path
+    local_base_path: Option<String>,
+    absolute_path: Option<String>,
+}
+impl Lnk {
+    fn absolute_path(self: &mut Self, base: String){
+        if self.relative_path.is_some(){
+            let r = self.relative_path.clone();
+            let relative = r.unwrap().clone().replace('\\', "/");
+            let dir = Path::new(&base).parent().unwrap_or_else(|| Path::new("."));
+            let absolute = std::fs::canonicalize(dir.join(relative));
+            if absolute.is_ok(){
+                match absolute.unwrap().to_str(){
+                    Some(a) => {self.absolute_path = Some(a.to_string());},
+                    None => {},
+                }
+            }
+        }
+        match self.absolute_path{
+            Some(_) => return,
+            None => {
+                let drives = get_drives();
+                todo!("So basically the problem is that if the relative is broken I shall use the LOCAL BASE PATH and I have to cross check the volume label with the current one using lsblk ");
+                // 1. Find from the drives which has the same label
+                // 2. Replace the \\ with / (Unix style)
+                // 3. Replace the first two letters (X:) with mountpoint
+                // 4. If the newly created absolute path works then return Some(abs) otherwise None and the program will silently fail
+            },
+        }
+    }
+
+}
+
+fn split_args(s: &str) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_arg = false; // lets "" produce an empty argument
+    let mut quote: Option<char> = None;
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                } else if c == '\\' && q == '"' && chars.peek() == Some(&'"') {
+                    current.push('"');
+                    chars.next();
+                } else {
+                    current.push(c);
+                }
+            }
+            None => {
+                if c == '"' || c == '\'' {
+                    quote = Some(c);
+                    in_arg = true;
+                } else if c.is_whitespace() {
+                    if in_arg {
+                        args.push(std::mem::take(&mut current));
+                        in_arg = false;
+                    }
+                } else {
+                    current.push(c);
+                    in_arg = true;
+                }
+            }
+        }
+    }
+
+    if quote.is_some() {
+        return None;
+    }
+    if in_arg {
+        args.push(current);
+    }
+    Some(args)
+}
+use std::ffi::OsStr;
+use std::io::{self, ErrorKind};
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+fn open_smart(target: &str, command_line_arguments: Option<String>, working_dir: Option<String>) -> io::Result<()> {
+    let path = Path::new(target);
+    let is_exe = path
+        .extension()
+        .and_then(OsStr::to_str)
+        .map(|e| e.eq_ignore_ascii_case("exe"))
+        .unwrap_or(false);
+
+    let mut cmd;
+    if is_exe {
+        let abs = std::path::absolute(path)?;
+        let dir: PathBuf = match working_dir.as_deref().filter(|d| !d.trim().is_empty()) {
+            Some(d) => PathBuf::from(d),
+            None => abs
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| ".".into()),
+        };
+
+        let extra_args: Vec<String> = match command_line_arguments.as_deref() {
+            Some(s) if !s.trim().is_empty() => split_args(s).ok_or_else(|| {
+                io::Error::new(ErrorKind::InvalidInput, "unbalanced quotes in arguments")
+            })?,
+            _ => Vec::new(),
+        };
+
+        cmd = Command::new("wine");
+        cmd.arg(&abs).args(extra_args).current_dir(dir);
+    } else {
+        cmd = Command::new("xdg-open");
+        cmd.arg(target);
+    }
+
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()?;
+    Ok(())
+}
+
+const HELP: &str =
+"
+
+Normal Usage:
+lnkx /path/to/file.lnk : Tries to open the resource pointed at by the file
+
+CLI Usage:
+lnkx create /path/to/file.lnk /path/to/program.exe [arg1] [...] [argn] : Creates a new .lnk file
+lnkx convert /path/to/symlink /path/to/file.lnk : Converts an existing Symlink to a .lnk file while keeping the original file
+lnkx convert /path/to/file.lnk /path/to/symlink : Converts an existing .lnk file to a symlink while keeping the original file
+lnkx help : Shows this message
+lnkx (no arg) : Shows this message";
+
+use std::env;
 fn main() {
-    let d = get_drives();
-    dbg!(d);
+    let mut i = 0;
+    let mut args = Vec::new();
+    for argument in env::args() {
+        println!("{argument}");
+        args.push(argument.clone());
+        i += 1;
+    }
+    if i == 1{
+        println!("{HELP}");
+    } else if i == 2{
+        if args[1] == String::from("help"){
+            println!("{HELP}");
+        }
+        // else if args[1] == String::from(keyword1) { ... }
+        else {
+            let path = Path::new(&args[1]);
+            assert!(args[1].ends_with(".lnk"));
+            if path.exists(){
+                let link = lnk::ShellLink::open(path, lnk::encoding::WINDOWS_1252);
+                if link.is_err(){
+                    let _ = dbg!(link);
+                }else{
+                    let mut lnk = Lnk::default();
+                    let link = link.unwrap();
+                    // dbg!(&link);
+                    let string_data = link.string_data();
+                    lnk.relative_path = string_data.relative_path().clone();
+                    lnk.working_dir = string_data.working_dir().clone();
+                    lnk.command_line_arguments = string_data.command_line_arguments().clone();
+                    match link.link_info(){
+                        Some(a) => {
+                            match a.local_base_path(){
+                                Some(b) => {
+                                    lnk.local_base_path = Some(b.to_owned());
+                                },
+                                None => {}
+                            }
+                            match a.volume_id(){
+                                Some(b) => {
+                                    lnk.volume_label = Some(b.volume_label().to_owned());
+                                },
+                                None => {}
+                            }
+                        },
+                        None => {}
+                    }
+                    dbg!(&lnk);
+                    // Do stuff with the .lnk
+                    lnk.absolute_path(args[1].clone());
+                    match lnk.absolute_path{
+                        Some(a) => {
+                            dbg!(&a);
+                            let res = open_smart(&a.to_string(), lnk.command_line_arguments, lnk.working_dir);
+                            dbg!(&res);
+                        },
+                        None => {},
+                    }
+                }
+            }
+        }
+
+    }
 }
