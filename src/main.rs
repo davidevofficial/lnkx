@@ -15,8 +15,6 @@ lnkx /path/to/file.lnk : Tries to open the resource pointed at by the file
 CLI Usage:
 lnkx create /path/to/file.lnk /path/to/program.exe [arg1] [...] [argn] : Creates a new .lnk file
 lnkx create /path/to/file.url https://example.com : Creates a new .url file
-lnkx convert /path/to/symlink /path/to/file : Converts an existing Symlink to a .lnk file while keeping the original file
-lnkx convert /path/to/file.lnk /path/to/symlink : Converts an existing .lnk file to a symlink while keeping the original file
 lnkx help : Shows this message
 lnkx (no arg) : Shows this message";
 
@@ -285,56 +283,60 @@ fn main() {
         // else if args[1] == String::from(keyword1) { ... }
         else {
             let path = Path::new(&args[1]);
-            match parse_url_file(&path) {
-                Some(target) => {
-                    if let Err(e) = open_smart(&target, None, None)  {
-                        eprintln!("failed to open {target}: {e}");
+            if path.extension().unwrap() == "url" {
+                println!(".url found");
+                match parse_url_file(&path) {
+                    Some(target) => {
+                        if let Err(e) = open_smart(&target, None, None)  {
+                            eprintln!("failed to open {target}: {e}");
+                        }
                     }
+                    None => eprintln!("no URL= line found in file"),
                 }
-                None => eprintln!("no URL= line found in file"),
-            }
-            assert!(args[1].ends_with(".lnk"));
-            if path.exists(){
-                let link = lnk::ShellLink::open(path, lnk::encoding::WINDOWS_1252);
-                if link.is_err(){
-                    let _ = dbg!(link);
-                }else{
-                    let mut lnk = Lnk::default();
-                    let link = link.unwrap();
-                    // dbg!(&link);
-                    let string_data = link.string_data();
-                    lnk.relative_path = string_data.relative_path().clone();
-                    lnk.working_dir = string_data.working_dir().clone();
-                    lnk.command_line_arguments = string_data.command_line_arguments().clone();
-                    match link.link_info(){
-                        Some(a) => {
-                            match a.local_base_path(){
-                                Some(b) => {
-                                    lnk.local_base_path = Some(b.to_owned());
-                                },
-                                None => {}
-                            }
-                            match a.volume_id(){
-                                Some(b) => {
-                                    lnk.volume_label = Some(b.volume_label().to_owned());
-                                },
-                                None => {}
-                            }
-                        },
-                        None => {}
-                    }
-                    dbg!(&lnk);
-                    // Do stuff with the .lnk
-                    lnk.absolute_path(args[1].clone());
-                    dbg!(&lnk);
+            } if path.extension().unwrap() == "lnk"{
+                println!(".lnk found");
+                if path.exists(){
+                    let link = lnk::ShellLink::open(path, lnk::encoding::WINDOWS_1252);
+                    if link.is_err(){
+                        let _ = dbg!(link);
+                    }else{
+                        let mut lnk = Lnk::default();
+                        let link = link.unwrap();
+                        // dbg!(&link);
+                        let string_data = link.string_data();
+                        lnk.relative_path = string_data.relative_path().clone();
+                        lnk.working_dir = string_data.working_dir().clone();
+                        lnk.command_line_arguments = string_data.command_line_arguments().clone();
+                        match link.link_info(){
+                            Some(a) => {
+                                match a.local_base_path(){
+                                    Some(b) => {
+                                        lnk.local_base_path = Some(b.to_owned());
+                                    },
+                                    None => {}
+                                }
+                                match a.volume_id(){
+                                    Some(b) => {
+                                        lnk.volume_label = Some(b.volume_label().to_owned());
+                                    },
+                                    None => {}
+                                }
+                            },
+                            None => {}
+                        }
+                        dbg!(&lnk);
+                        // Do stuff with the .lnk
+                        lnk.absolute_path(args[1].clone());
+                        dbg!(&lnk);
 
-                    match lnk.absolute_path{
-                        Some(a) => {
-                            dbg!(&a);
-                            let res = open_smart(&a.to_string(), lnk.command_line_arguments, lnk.working_dir);
-                            dbg!(&res);
-                        },
-                        None => {},
+                        match lnk.absolute_path{
+                            Some(a) => {
+                                dbg!(&a);
+                                let res = open_smart(&a.to_string(), lnk.command_line_arguments, lnk.working_dir);
+                                dbg!(&res);
+                            },
+                            None => {},
+                        }
                     }
                 }
             }

@@ -10,8 +10,6 @@ Features:
 - [x] Runs the program with arguments using wine
 - [x] Open .url files
 - [ ] Runs Linux binaries with args
-- [ ] Use it as a CLI to create .lnk files for linux binaries
-- [ ] Use it as a CLI to convert .lnk files to symlinks and viceversa
 
 # How to build
 
