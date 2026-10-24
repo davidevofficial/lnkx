@@ -15,7 +15,7 @@ lnkx /path/to/file.lnk : Tries to open the resource pointed at by the file
 
 CLI Usage:
 lnkx create /path/to/file.lnk .\\relative\\windows\\path\\program.exe \"[arg1] [...] [argn]\" : Creates a new .lnk file with relative path
-(not yet supported) lnkx create /path/to/file.lnk X:\\absolute\\windows\\path\\program.exe volume_label \"[arg1] [...] [argn]\": Creates a new .lnk file with absolute path
+lnkx create /path/to/file.lnk X:\\absolute\\windows\\path\\program.exe volume_label \"[arg1] [...] [argn]\": Creates a new .lnk file with absolute path. Use lsblk to get volume_label
 lnkx create /path/to/file.url https://example.com : Creates a new .url file
 lnkx help : Shows this message
 lnkx (no arg) : Shows this message";
@@ -285,6 +285,89 @@ fn parse_url_file(path: &Path) -> Option<String> {
     })
 }
 
+/// Encode as NUL-terminated ANSI (Windows-1252, same codepage lnkx reads with).
+fn to_ansi_z(s: &str) -> Result<Vec<u8>, String> {
+    let (bytes, _, had_errors) = lnk::encoding::WINDOWS_1252.encode(s);
+    if had_errors {
+        return Err(format!("{s:?} has characters that don't exist in Windows-1252"));
+    }
+    let mut v = bytes.into_owned();
+    v.push(0);
+    Ok(v)
+}
+
+fn build_link_info(label: &str, local_base_path: &str, serial: u32) -> Result<Vec<u8>, String> {
+    const HEADER_SIZE: u32 = 0x1C;
+    let label_z = to_ansi_z(label)?;
+    let base_z = to_ansi_z(local_base_path)?;
+    let mut vol = Vec::new();
+    vol.extend_from_slice(&(0x10 + label_z.len() as u32).to_le_bytes());
+    vol.extend_from_slice(&3u32.to_le_bytes());
+    vol.extend_from_slice(&serial.to_le_bytes());
+    vol.extend_from_slice(&0x10u32.to_le_bytes());
+    vol.extend_from_slice(&label_z);
+    let volume_id_offset = HEADER_SIZE;
+    let local_base_offset = volume_id_offset + vol.len() as u32;
+    let suffix_offset = local_base_offset + base_z.len() as u32;
+    let total = suffix_offset + 1;
+    let mut li = Vec::with_capacity(total as usize);
+    li.extend_from_slice(&total.to_le_bytes());
+    li.extend_from_slice(&HEADER_SIZE.to_le_bytes());
+    li.extend_from_slice(&1u32.to_le_bytes());
+    li.extend_from_slice(&volume_id_offset.to_le_bytes());
+    li.extend_from_slice(&local_base_offset.to_le_bytes());
+    li.extend_from_slice(&0u32.to_le_bytes());
+    li.extend_from_slice(&suffix_offset.to_le_bytes());
+    li.extend_from_slice(&vol);
+    li.extend_from_slice(&base_z);
+    li.push(0);
+    Ok(li)
+}
+
+fn add_link_info(lnk_path: &Path, link_info: &[u8]) -> io::Result<()> {
+    let bytes = std::fs::read(lnk_path)?;
+    if bytes.len() < 0x4C {
+        return Err(io::Error::new(ErrorKind::InvalidData, "file shorter than a lnk header"));
+    }
+    let flags = u32::from_le_bytes(bytes[0x14..0x18].try_into().unwrap());
+    if flags & 0x3 != 0 {
+        return Err(io::Error::new(ErrorKind::InvalidData,
+            "file already has an ID list or LinkInfo; refusing to splice"));
+    }
+    let mut out = Vec::with_capacity(bytes.len() + link_info.len());
+    out.extend_from_slice(&bytes[..0x4C]);
+    out.extend_from_slice(link_info);
+    out.extend_from_slice(&bytes[0x4C..]);
+    out[0x14..0x18].copy_from_slice(&(flags | 0x2).to_le_bytes());
+    std::fs::write(lnk_path, out)
+}
+
+fn create_lnk_absolute(out: &Path, win_path: &str, label: &str, arguments: Option<&str>) -> Result<(), String> {
+    let win_path = win_path.replace('/', "\\");
+    let b = win_path.as_bytes();
+    if !(b.len() > 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\') {
+        return Err(format!("expected a path like X:\\dir\\program.exe, got {win_path}"));
+    }
+    if label.trim().is_empty() {
+        return Err("volume label must not be empty".into());
+    }
+    let link_info = build_link_info(label, &win_path, 0)?;
+    let (dir, _file) = win_path.rsplit_once('\\').unwrap();
+    let dir = if dir.len() == 2 { format!("{dir}\\") } else { dir.to_string() };
+    let mut sl = lnk::ShellLink::default();
+    sl.set_working_dir(Some(dir));
+    if let Some(a) = arguments.filter(|a| !a.trim().is_empty()) {
+        sl.set_arguments(Some(a.to_string()));
+    }
+    sl.save(out).map_err(|e| format!("{e:?}"))?;
+
+    if let Err(e) = add_link_info(out, &link_info) {
+        let _ = std::fs::remove_file(out);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
 fn main() {
     let mut i = 0;
     let mut args = Vec::new();
@@ -320,12 +403,17 @@ fn main() {
                 let pointing = &args[3];
                 // we check if the second char is a ':' because absolute paths' first chars are A: / B: / ... / Z:
                 if pointing[1..2] == *":"{
-                    if i <= 5{
-                        println!("Absolute paths are not yet supported, see help below ----\\/\n");
+                    if i < 5{
+                        println!("There is a lack of arguments (such as volume label missing), see help below ----\\/\n");
 
                         println!("{HELP}");
                         return;
                     }
+                    match create_lnk_absolute(path, pointing, &args[4], args.get(5).map(String::as_str)) {
+                        Ok(()) => println!("Created {}", path.display()),
+                        Err(e) => eprintln!("create failed: {e}"),
+                    }
+                    return;
                 }
                 let mut new_lnk = lnk::ShellLink::default();
                 new_lnk.set_relative_path(Some(pointing.clone()));
