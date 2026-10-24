@@ -295,6 +295,9 @@ fn main() {
                 return;
             }
             if path.extension().unwrap() == "lnk"{
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).unwrap();
+                }
                 let pointing = &args[3];
                 // we check if the second char is a ':' because absolute paths' first chars are A: / B: / ... / Z:
                 if pointing[1..2] == *":"{
