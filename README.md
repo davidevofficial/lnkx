@@ -10,6 +10,7 @@ Features:
 - [x] Runs the program with arguments using wine
 - [x] Open .url files
 - [x] Runs Linux binaries with args
+- [x] Create .url or .lnk files
 
 # How to build
 
