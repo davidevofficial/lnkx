@@ -15,4 +15,4 @@ panic = "abort"
 strip = "symbols"
 
 [dependencies]
-lnk = "0.6.4"
+lnk = { version = "0.6.4", features = ["binwrite", "unstable-save"] }

@@ -8,12 +8,12 @@ use std::env;
 
 const HELP: &str =
 "
-
 Normal Usage:
 lnkx /path/to/file.lnk : Tries to open the resource pointed at by the file
 
 CLI Usage:
-lnkx create /path/to/file.lnk /path/to/program.exe [arg1] [...] [argn] : Creates a new .lnk file
+lnkx create /path/to/file.lnk .\\relative\\windows\\path\\program.exe \"[arg1] [...] [argn]\" : Creates a new .lnk file with relative path
+(not yet supported) lnkx create /path/to/file.lnk X:\\absolute\\windows\\path\\program.exe : Creates a new .lnk file with absolute path
 lnkx create /path/to/file.url https://example.com : Creates a new .url file
 lnkx help : Shows this message
 lnkx (no arg) : Shows this message";
@@ -276,11 +276,59 @@ fn main() {
     }
     if i == 1{
         println!("{HELP}");
-    } else if i == 2{
+    } else if i >= 2{
         if args[1] == String::from("help"){
             println!("{HELP}");
         }
-        // else if args[1] == String::from(keyword1) { ... }
+        else if args[1] == String::from("create") {
+            println!("Creating...");
+
+            if i < 4{
+                println!("Lacks some arguments, see help below ----\\/\n");
+
+                println!("{HELP}");
+                return;
+            }
+            let path = Path::new(&args[2]);
+            if path.extension().is_none(){
+                println!("Path lacks extension (use either .url or .lnk");
+                return;
+            }
+            if path.extension().unwrap() == "lnk"{
+                let pointing = &args[3];
+                // we check if the second char is a ':' because absolute paths' first chars are A: / B: / ... / Z:
+                if pointing[1..2] == *":"{
+                    if i <= 5{
+                        println!("Absolute paths are not yet supported, see help below ----\\/\n");
+
+                        println!("{HELP}");
+                        return;
+                    }
+                }
+                let mut new_lnk = lnk::ShellLink::default();
+                new_lnk.set_relative_path(Some(pointing.clone()));
+                if i == 5{
+                    if let Some(a) = (Some(&*args[4])).filter(|a| !a.trim().is_empty()) {
+                        new_lnk.set_arguments(Some(a.to_string()));
+                    }
+                }
+                let res = new_lnk.save(path);
+                dbg!(&res);
+            }
+            if path.extension().unwrap() == "url"{
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).unwrap();
+                }
+                let contents = format!(
+                    "[InternetShortcut]\nURL={}",
+                    &args[3]
+                );
+                let res = std::fs::write(path, contents);
+                dbg!(&res);
+
+            }
+
+        }
         else {
             let path = Path::new(&args[1]);
             if path.extension().unwrap() == "url" {
