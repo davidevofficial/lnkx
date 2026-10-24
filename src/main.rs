@@ -5,6 +5,8 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::env;
+use std::io::Read;
+use std::os::unix::fs::PermissionsExt;
 
 const HELP: &str =
 "
@@ -13,10 +15,24 @@ lnkx /path/to/file.lnk : Tries to open the resource pointed at by the file
 
 CLI Usage:
 lnkx create /path/to/file.lnk .\\relative\\windows\\path\\program.exe \"[arg1] [...] [argn]\" : Creates a new .lnk file with relative path
-(not yet supported) lnkx create /path/to/file.lnk X:\\absolute\\windows\\path\\program.exe : Creates a new .lnk file with absolute path
+(not yet supported) lnkx create /path/to/file.lnk X:\\absolute\\windows\\path\\program.exe volume_label \"[arg1] [...] [argn]\": Creates a new .lnk file with absolute path
 lnkx create /path/to/file.url https://example.com : Creates a new .url file
 lnkx help : Shows this message
 lnkx (no arg) : Shows this message";
+
+/// Regular file, has an exec bit, and is an ELF binary or a #! script.
+fn is_native_executable(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else { return false };
+    if !meta.is_file() || meta.permissions().mode() & 0o111 == 0 {
+        return false;
+    }
+    let mut magic = [0u8; 4];
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    if f.read_exact(&mut magic).is_err() {
+        return false;
+    }
+    magic == *b"\x7fELF" || magic[..2] == *b"#!"
+}
 
 #[derive(Debug, Default)]
 pub struct Drive{
@@ -219,18 +235,15 @@ fn open_smart(target: &str, command_line_arguments: Option<String>, working_dir:
         .and_then(OsStr::to_str)
         .map(|e| e.eq_ignore_ascii_case("exe"))
         .unwrap_or(false);
+    let is_native = !is_exe && is_native_executable(path);
 
     let mut cmd;
-    if is_exe {
+    if is_exe || is_native {
         let abs = std::path::absolute(path)?;
         let dir: PathBuf = match working_dir.as_deref().filter(|d| !d.trim().is_empty()) {
             Some(d) => PathBuf::from(d),
-            None => abs
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| ".".into()),
+            None => abs.parent().map(Path::to_path_buf).unwrap_or_else(|| ".".into()),
         };
-
         let extra_args: Vec<String> = match command_line_arguments.as_deref() {
             Some(s) if !s.trim().is_empty() => split_args(s).ok_or_else(|| {
                 io::Error::new(ErrorKind::InvalidInput, "unbalanced quotes in arguments")
@@ -238,8 +251,14 @@ fn open_smart(target: &str, command_line_arguments: Option<String>, working_dir:
             _ => Vec::new(),
         };
 
-        cmd = Command::new("wine");
-        cmd.arg(&abs).args(extra_args).current_dir(dir);
+        cmd = if is_exe {
+            let mut c = Command::new("wine");
+            c.arg(&abs);
+            c
+        } else {
+            Command::new(&abs) // absolute path, so no PATH lookup
+        };
+        cmd.args(extra_args).current_dir(dir);
     } else {
         cmd = Command::new("xdg-open");
         cmd.arg(target);

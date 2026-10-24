@@ -9,7 +9,7 @@ Features:
 - [x] Runs the windows program using wine
 - [x] Runs the program with arguments using wine
 - [x] Open .url files
-- [ ] Runs Linux binaries with args
+- [x] Runs Linux binaries with args
 
 # How to build
 
